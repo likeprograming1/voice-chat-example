@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>P2P Voice Chat</title>
+  </head>
+  <body>
+    <h1>P2P Voice Chat</h1>
+    <button id="start-call">Start Call</button>
+    <audio id="remote-audio" autoplay></audio>
+
+    <script>
+      const startCallButton = document.getElementById("start-call");
+      const remoteAudio = document.getElementById("remote-audio");
+
+      const signalingServer = new WebSocket("ws://localhost:8000/ws");
+      const peerConnection = new RTCPeerConnection();
+
+      // 오디오 스트림 처리
+      async function getAudioStream() {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        stream
+          .getTracks()
+          .forEach((track) => peerConnection.addTrack(track, stream));
+      }
+
+      // 신호 교환 메시지 처리
+      signalingServer.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === "offer") {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message)
+          );
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          signalingServer.send(JSON.stringify(peerConnection.localDescription));
+        } else if (message.type === "answer") {
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message)
+          );
+        } else if (message.type === "candidate") {
+          await peerConnection.addIceCandidate(
+            new RTCIceCandidate(message.candidate)
+          );
+        }
+      };
+
+      // ICE 후보자 처리
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          signalingServer.send(
+            JSON.stringify({ type: "candidate", candidate: event.candidate })
+          );
+        }
+      };
+
+      // 원격 스트림 처리
+      peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+      };
+
+      // 시작 버튼 클릭 이벤트
+      startCallButton.onclick = async () => {
+        await getAudioStream();
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        signalingServer.send(JSON.stringify(peerConnection.localDescription));
+      };
+    </script>
+  </body>
+</html>
